@@ -14,6 +14,11 @@ namespace ZeroTokenizer.Core
         public const string Eos = "<eos>";
         public const string Unk = "<unk>";
 
+        public const int PadId = 0;
+        public const int BosId = 1;
+        public const int EosId = 2;
+        public const int UnkId = 3;
+
         public const string System = "<system>";
         public const string User = "<user>";
         public const string Assistant = "<assistant>";
