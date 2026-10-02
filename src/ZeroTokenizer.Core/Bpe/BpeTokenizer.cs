@@ -14,17 +14,24 @@ namespace ZeroTokenizer.Core.Bpe
         private readonly Dictionary<string, int> _tokenToId;
         private readonly Dictionary<int, string> _idToToken;
         private readonly Dictionary<(int, int), int> _bpeRanks;
+        private readonly HashSet<string> _specialTokens;
         private readonly int _maxTokenId;
 
         public int VocabularySize => _tokenToId.Count;
+        public IReadOnlyDictionary<string, int> TokenToId => _tokenToId;
+        public IReadOnlyDictionary<int, string> IdToToken => _idToToken;
+        public IReadOnlyDictionary<(int, int), int> BpeRanks => _bpeRanks;
+        public IReadOnlyCollection<string> SpecialTokens => _specialTokens;
 
         public BpeTokenizer(
             Dictionary<string, int> vocabulary,
-            Dictionary<(int, int), int> bpeRanks)
+            Dictionary<(int, int), int> bpeRanks,
+            IEnumerable<string>? specialTokens = null)
         {
             _tokenToId = new Dictionary<string, int>(vocabulary);
             _idToToken = new Dictionary<int, string>(vocabulary.Count);
             _bpeRanks = new Dictionary<(int, int), int>(bpeRanks);
+            _specialTokens = new HashSet<string>(specialTokens ?? Array.Empty<string>(), StringComparer.Ordinal);
 
             int maxId = 0;
             foreach (var kvp in vocabulary)
@@ -33,6 +40,17 @@ namespace ZeroTokenizer.Core.Bpe
                 if (kvp.Value > maxId) maxId = kvp.Value;
             }
             _maxTokenId = maxId;
+
+            // Ensure special tokens are present in vocabulary
+            foreach (var sp in _specialTokens)
+            {
+                if (!_tokenToId.ContainsKey(sp))
+                {
+                    int id = _tokenToId.Count;
+                    _tokenToId[sp] = id;
+                    _idToToken[id] = sp;
+                }
+            }
 
             // Ensure all 256 byte tokens exist
             EnsureByteTokens();
@@ -96,14 +114,10 @@ namespace ZeroTokenizer.Core.Bpe
                 int id = tokenIds[i];
                 if (_idToToken.TryGetValue(id, out string? token))
                 {
-                    if (token.StartsWith("<0x") && token.EndsWith(">") && token.Length == 6)
+                    if (IsByteTokenSequence(token))
                     {
-                        // Byte fallback
-                        if (byte.TryParse(token.Substring(3, 2), System.Globalization.NumberStyles.HexNumber, null, out byte b))
-                        {
-                            byteBuffer.Add(b);
-                            continue;
-                        }
+                        ParseByteTokenSequence(token, byteBuffer);
+                        continue;
                     }
 
                     // Flush any pending byte buffer
@@ -126,6 +140,28 @@ namespace ZeroTokenizer.Core.Bpe
             return decoded.Length;
         }
 
+        private static bool IsByteTokenSequence(string token)
+        {
+            if (string.IsNullOrEmpty(token) || token.Length % 6 != 0) return false;
+            for (int i = 0; i < token.Length; i += 6)
+            {
+                if (token[i] != '<' || token[i + 1] != '0' || token[i + 2] != 'x' || token[i + 5] != '>')
+                    return false;
+            }
+            return true;
+        }
+
+        private static void ParseByteTokenSequence(string token, List<byte> byteBuffer)
+        {
+            for (int i = 0; i < token.Length; i += 6)
+            {
+                if (byte.TryParse(token.Substring(i + 3, 2), System.Globalization.NumberStyles.HexNumber, null, out byte b))
+                {
+                    byteBuffer.Add(b);
+                }
+            }
+        }
+
         private static void FlushBytes(StringBuilder sb, List<byte> byteBuffer)
         {
             if (byteBuffer.Count > 0)
@@ -141,11 +177,69 @@ namespace ZeroTokenizer.Core.Bpe
             var result = new List<int>();
             if (text.IsEmpty) return result;
 
-            // 1. Initial word splitting by whitespace and punctuation
+            int pos = 0;
+            while (pos < text.Length)
+            {
+                // 1. Check if any special token matches at current position
+                if (_specialTokens.Count > 0)
+                {
+                    string? matchedSpecial = null;
+                    foreach (var sp in _specialTokens)
+                    {
+                        if (pos + sp.Length <= text.Length && text.Slice(pos, sp.Length).SequenceEqual(sp.AsSpan()))
+                        {
+                            if (matchedSpecial == null || sp.Length > matchedSpecial.Length)
+                            {
+                                matchedSpecial = sp;
+                            }
+                        }
+                    }
+
+                    if (matchedSpecial != null)
+                    {
+                        if (_tokenToId.TryGetValue(matchedSpecial, out int spId))
+                        {
+                            result.Add(spId);
+                        }
+                        pos += matchedSpecial.Length;
+                        continue;
+                    }
+                }
+
+                // 2. Find next special token boundary so text tokenization stops before it
+                int limit = text.Length;
+                if (_specialTokens.Count > 0)
+                {
+                    for (int checkPos = pos; checkPos < text.Length; checkPos++)
+                    {
+                        foreach (var sp in _specialTokens)
+                        {
+                            if (checkPos + sp.Length <= text.Length && text.Slice(checkPos, sp.Length).SequenceEqual(sp.AsSpan()))
+                            {
+                                limit = checkPos;
+                                break;
+                            }
+                        }
+                        if (limit < text.Length) break;
+                    }
+                }
+
+                // 3. Tokenize regular text slice [pos, limit)
+                EncodeTextSegment(text.Slice(pos, limit - pos), result);
+                pos = limit;
+            }
+
+            return result;
+        }
+
+        private void EncodeTextSegment(ReadOnlySpan<char> text, List<int> result)
+        {
+            if (text.IsEmpty) return;
+
             int start = 0;
             while (start < text.Length)
             {
-                // Find next token segment
+                // Word splitting by whitespace
                 int end = start;
                 bool isSpace = char.IsWhiteSpace(text[start]);
 
@@ -157,14 +251,14 @@ namespace ZeroTokenizer.Core.Bpe
                 string segment = text.Slice(start, end - start).ToString();
                 start = end;
 
-                // 2. Check if segment itself is a known token
+                // Check if segment itself is a known token
                 if (_tokenToId.TryGetValue(segment, out int directId))
                 {
                     result.Add(directId);
                     continue;
                 }
 
-                // 3. Convert segment to UTF-8 bytes and BPE merge
+                // Convert segment to UTF-8 bytes and BPE merge
                 byte[] bytes = Encoding.UTF8.GetBytes(segment);
                 var wordTokens = new List<int>(bytes.Length);
                 for (int b = 0; b < bytes.Length; b++)
@@ -176,13 +270,11 @@ namespace ZeroTokenizer.Core.Bpe
                     }
                 }
 
-                // 4. Repeatedly merge lowest-rank pairs
+                // Repeatedly merge lowest-rank pairs
                 BpeMerge(wordTokens);
 
                 result.AddRange(wordTokens);
             }
-
-            return result;
         }
 
         private void BpeMerge(List<int> tokens)
