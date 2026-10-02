@@ -8,6 +8,11 @@ namespace ZeroTokenizer.Core.Abstractions
     public interface ITokenizer
     {
         /// <summary>
+        /// Total number of unique tokens in the tokenizer's vocabulary.
+        /// </summary>
+        int VocabularySize { get; }
+
+        /// <summary>
         /// Calculates the number of tokens in the given text without allocating integer arrays.
         /// </summary>
         int CountTokens(ReadOnlySpan<char> text);

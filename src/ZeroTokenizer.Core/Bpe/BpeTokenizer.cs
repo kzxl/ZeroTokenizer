@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using ZeroTokenizer.Core.Abstractions;
 
@@ -322,6 +323,133 @@ namespace ZeroTokenizer.Core.Bpe
                 {
                     break;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Serializes tokenizer vocabulary and BPE merge ranks to a stream writer in a fast, robust text format.
+        /// </summary>
+        public void Save(TextWriter writer)
+        {
+            if (writer == null) throw new ArgumentNullException(nameof(writer));
+
+            writer.WriteLine("# ZERO_BPE_V1");
+
+            // Write special tokens
+            writer.WriteLine($"[SPECIAL_TOKENS_COUNT]:{_specialTokens.Count}");
+            foreach (var sp in _specialTokens)
+            {
+                writer.WriteLine(sp);
+            }
+
+            // Write vocabulary
+            writer.WriteLine($"[VOCAB_COUNT]:{_tokenToId.Count}");
+            foreach (var kvp in _tokenToId)
+            {
+                string escaped = kvp.Key
+                    .Replace("\\", "\\\\")
+                    .Replace("\r", "\\r")
+                    .Replace("\n", "\\n")
+                    .Replace("\t", "\\t");
+                writer.WriteLine($"{kvp.Value}\t{escaped}");
+            }
+
+            // Write merge ranks
+            writer.WriteLine($"[RANKS_COUNT]:{_bpeRanks.Count}");
+            foreach (var kvp in _bpeRanks)
+            {
+                writer.WriteLine($"{kvp.Key.Item1}\t{kvp.Key.Item2}\t{kvp.Value}");
+            }
+        }
+
+        public void Save(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath)) throw new ArgumentNullException(nameof(filePath));
+            using (var sw = new StreamWriter(filePath, false, Encoding.UTF8))
+            {
+                Save(sw);
+            }
+        }
+
+        /// <summary>
+        /// Deserializes a BPE tokenizer from a stream reader.
+        /// </summary>
+        public static BpeTokenizer Load(TextReader reader)
+        {
+            if (reader == null) throw new ArgumentNullException(nameof(reader));
+
+            string? header = reader.ReadLine();
+            if (header != "# ZERO_BPE_V1" && header != "# ZERO_VIETNAMESE_ERP_BPE_V1")
+            {
+                throw new InvalidDataException("Invalid tokenizer format or unsupported header.");
+            }
+
+            var specialTokens = new List<string>();
+            var vocab = new Dictionary<string, int>(StringComparer.Ordinal);
+            var ranks = new Dictionary<(int, int), int>();
+
+            string? line = reader.ReadLine();
+            if (line != null && line.StartsWith("[SPECIAL_TOKENS_COUNT]:"))
+            {
+                int count = int.Parse(line.Substring("[SPECIAL_TOKENS_COUNT]:".Length));
+                for (int i = 0; i < count; i++)
+                {
+                    specialTokens.Add(reader.ReadLine() ?? string.Empty);
+                }
+                line = reader.ReadLine();
+            }
+
+            if (line != null && line.StartsWith("[VOCAB_COUNT]:"))
+            {
+                int count = int.Parse(line.Substring("[VOCAB_COUNT]:".Length));
+                for (int i = 0; i < count; i++)
+                {
+                    string? entry = reader.ReadLine();
+                    if (string.IsNullOrEmpty(entry)) continue;
+
+                    int tabIdx = entry.IndexOf('\t');
+                    if (tabIdx > 0)
+                    {
+                        int id = int.Parse(entry.Substring(0, tabIdx));
+                        string rawKey = entry.Substring(tabIdx + 1)
+                            .Replace("\\t", "\t")
+                            .Replace("\\n", "\n")
+                            .Replace("\\r", "\r")
+                            .Replace("\\\\", "\\");
+                        vocab[rawKey] = id;
+                    }
+                }
+                line = reader.ReadLine();
+            }
+
+            if (line != null && line.StartsWith("[RANKS_COUNT]:"))
+            {
+                int count = int.Parse(line.Substring("[RANKS_COUNT]:".Length));
+                for (int i = 0; i < count; i++)
+                {
+                    string? entry = reader.ReadLine();
+                    if (string.IsNullOrEmpty(entry)) continue;
+
+                    var parts = entry.Split('\t');
+                    if (parts.Length >= 3)
+                    {
+                        int p1 = int.Parse(parts[0]);
+                        int p2 = int.Parse(parts[1]);
+                        int rank = int.Parse(parts[2]);
+                        ranks[(p1, p2)] = rank;
+                    }
+                }
+            }
+
+            return new BpeTokenizer(vocab, ranks, specialTokens);
+        }
+
+        public static BpeTokenizer Load(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath)) throw new ArgumentNullException(nameof(filePath));
+            using (var sr = new StreamReader(filePath, Encoding.UTF8))
+            {
+                return Load(sr);
             }
         }
     }
