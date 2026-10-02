@@ -20,8 +20,13 @@ namespace ZeroTokenizer.Core
         public const int UnkId = 3;
 
         public const string System = "<system>";
+        public const string EndSystem = "</system>";
+
         public const string User = "<user>";
+        public const string EndUser = "</user>";
+
         public const string Assistant = "<assistant>";
+        public const string EndAssistant = "</assistant>";
 
         public const string Thought = "<thought>";
         public const string EndThought = "</thought>";
@@ -41,7 +46,9 @@ namespace ZeroTokenizer.Core
         public static readonly IReadOnlyList<string> All = new[]
         {
             Pad, Bos, Eos, Unk,
-            System, User, Assistant,
+            System, EndSystem,
+            User, EndUser,
+            Assistant, EndAssistant,
             Thought, EndThought,
             ToolCall, EndToolCall,
             ToolResult, EndToolResult,
