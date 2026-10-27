@@ -1,3 +1,13 @@
+> [!IMPORTANT]
+> ### 🏛️ REPOSITORY CONSOLIDATION NOTICE
+> **This repository has been officially consolidated into the unified [ZeroPlatform Sovereign Monorepo](https://github.com/kzxl/ZeroPlatform).**  
+> All active development, issues, pull requests, and new releases take place in the central repository:  
+> 👉 **[kzxl/ZeroPlatform/tree/master/ZeroTokenizer](https://github.com/kzxl/ZeroPlatform/tree/master/ZeroTokenizer)**
+> 
+> *This repository is archived and preserved for historical reference and permanent package links.*
+
+---
+
 # 🔤 ZeroTokenizer: Sovereign Pure C# BPE & Tiktoken Engine
 
 [![Version: 1.1.0](https://img.shields.io/badge/Version-1.1.0-blue.svg)](https://github.com/kzxl/ZeroTokenizer)
